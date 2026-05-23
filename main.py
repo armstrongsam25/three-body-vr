@@ -30,6 +30,7 @@ from src.prediction import PredictionOverlay, KnowledgeDiscovery
 from src.starfield import Starfield, BloomRenderer
 from src.fleet import FleetManager, SpaceProbe
 from src.events import EventManager
+from src.tech_tree import TechManager, TechTreeDisplay, TECH_TREE
 
 
 class Game:
@@ -48,7 +49,7 @@ class Game:
         self.fullscreen = False
 
         # Game states
-        self.game_state = "menu"  # menu, scenario_select, playing, paused, help, achievements
+        self.game_state = "menu"  # menu, scenario_select, playing, paused, help, achievements, research
         self.mode = MODE_OBSERVE
         self.time_scale = TIME_SCALE
         self.show_help = False
@@ -81,6 +82,8 @@ class Game:
         self.bloom = BloomRenderer()
         self.fleet = FleetManager()
         self.event_manager = EventManager()
+        self.tech_manager = TechManager()
+        self.tech_display = TechTreeDisplay(SCREEN_WIDTH, SCREEN_HEIGHT)
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -125,6 +128,7 @@ class Game:
         self.milestones = MilestoneTracker()
         self.fleet = FleetManager()  # Reset fleet
         self.event_manager = EventManager()  # Reset events
+        self.tech_manager = TechManager()  # Reset tech tree
         self.renderer.camera.offset = np.array([0.0, 0.0])
         self.renderer.camera.target_zoom = 1.0
         self.time_scale = 1.0
@@ -292,6 +296,14 @@ class Game:
                         self.renderer.camera.target_offset = self.planet.pos.copy()
                         self.show_flash("Centered on Trisolaris", 30)
 
+                    elif event.key == pygame.K_t and self.game_state == "playing":
+                        self.game_state = "research"
+                        self.tech_display.setup(
+                            TECH_TREE,
+                            self.civilization.knowledge,
+                            self.tech_manager.researched
+                        )
+
                     # Fleet launch keys (with qualifiers for sun targeting)
                     elif event.key == pygame.K_1 and self.game_state == "playing":
                         # Launch scout to sun 1
@@ -426,6 +438,26 @@ class Game:
                 if action == "back":
                     self.game_state = "menu"
                     self.menu.setup()
+
+        elif self.game_state == "research":
+            action = self.tech_display.update(mouse_pos, mouse_click, mouse_wheel)
+            if action == "back":
+                self.game_state = "playing"
+            elif action and action[0] == 'research':
+                node = action[1]
+                success, msg = self.tech_manager.research(
+                    node.tech_id, self.civilization.knowledge,
+                    self.civilization, self.fleet, self.progression
+                )
+                if success:
+                    self.show_flash(msg, 120)
+                    self.tech_display.status_message = msg
+                    self.tech_display.setup(
+                        TECH_TREE, self.civilization.knowledge,
+                        self.tech_manager.researched
+                    )
+                else:
+                    self.tech_display.status_message = msg
 
         elif self.game_state == "paused":
             action = self.pause_menu.update(mouse_pos, mouse_click)
@@ -632,6 +664,7 @@ class Game:
             ("M            Mute/Unmute Audio", False, WHITE),
             ("F5           Quick Save", False, WHITE),
             ("F9           Quick Load", False, WHITE),
+            ("T            Research Lab", False, WHITE),
             ("F            Fullscreen", False, WHITE),
             ("0,1,2,5       Set Time Speed", False, WHITE),
             ("[/]          Adjust Time Scale", False, WHITE),
@@ -787,6 +820,11 @@ class Game:
         if self.game_state == "achievements":
             if self.achievements_screen:
                 self.achievements_screen.render(self.screen)
+            pygame.display.flip()
+            return
+
+        if self.game_state == "research":
+            self.tech_display.render(self.screen)
             pygame.display.flip()
             return
 
