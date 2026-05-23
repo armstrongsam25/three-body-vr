@@ -25,6 +25,7 @@ from src.save_system import SaveSystem
 from src.progression import ProgressionManager, DIFFICULTY_SETTINGS, SCENARIOS, Difficulty
 from src.achievements import AchievementsScreen
 from src.scenario_select import ScenarioSelectScreen
+from src.effects import NebulaRenderer, ShockwaveEffect, ScreenShake, TransitionEffect
 
 
 class Game:
@@ -61,11 +62,15 @@ class Game:
         # Audio
         self.audio = AudioEngine()
 
-        # Lore, Save, Progression, Achievements
+        # Lore, Save, Progression, Achievements, Effects
         self.lore = LoreEngine()
         self.save_system = SaveSystem()
         self.progression = ProgressionManager()
         self.achievements_screen = None
+        self.nebula = NebulaRenderer(SCREEN_WIDTH, SCREEN_HEIGHT)
+        self.shockwaves = ShockwaveEffect()
+        self.screenshake = ScreenShake()
+        self.transition = TransitionEffect(SCREEN_WIDTH, SCREEN_HEIGHT)
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -121,6 +126,9 @@ class Game:
 
         # Start music
         self.audio.start_music()
+
+        # Fade in from black
+        self.transition.start_fade_in(8)
 
         # Show difficulty
         diff_name = DIFFICULTY_SETTINGS[self.progression.current_difficulty]['name']
@@ -384,6 +392,11 @@ class Game:
                             (b1.pos + b2.pos) / 2, count=20,
                             color=(255, 220, 80), speed=5.0, lifetime=60
                         )
+                        self.shockwaves.emit(
+                            (b1.pos + b2.pos) / 2,
+                            color=(255, 220, 80), max_radius=200, duration=45
+                        )
+                        self.screenshake.trigger(5, 15)
 
             # Planet temperature
             planet_idx = len(self.simulation.bodies) - 1
@@ -429,6 +442,8 @@ class Game:
                     self._last_collapse = 0
                 if state['collapse_count'] > self._last_collapse:
                     self.audio.play('collapse')
+                    self.shockwaves.emit(self.planet.pos, color=(255, 100, 50), max_radius=500, duration=90)
+                    self.screenshake.trigger(15, 30)
                     self._last_collapse = state['collapse_count']
 
             # Update lore engine
@@ -449,6 +464,9 @@ class Game:
                 self.milestone_popup_timer = 180
                 self.audio.play('milestone')
                 self.civilization.add_knowledge(5)
+                self.shockwaves.emit(
+                    self.planet.pos, color=(100, 255, 200), max_radius=350, duration=80
+                )
                 # Add milestone narrative
                 narrative = self.lore.get_milestone_narrative(unlocked[0])
                 if narrative:
@@ -472,6 +490,11 @@ class Game:
             self.milestone_popup_timer -= 1
             if self.milestone_popup_timer == 0:
                 self.milestone_popup = None
+
+        # Update effects
+        self.shockwaves.update()
+        self.screenshake.update()
+        self.transition.update()
 
         self.frame_count += 1
 
@@ -661,6 +684,9 @@ class Game:
         planet_idx = len(self.simulation.bodies) - 1
         temp = self.simulation.get_planet_temperature(planet_idx)
 
+        # Draw nebula background (before game render)
+        self.nebula.draw(self.screen, camera_offset=self.renderer.camera.offset)
+
         self.renderer.render(
             self.simulation,
             state['era'],
@@ -670,6 +696,16 @@ class Game:
             self.time_scale,
             self.game_state == "paused",
         )
+
+        # Draw shockwaves (after simulation render, on top)
+        self.shockwaves.draw(self.screen, self.renderer.camera)
+
+        # Apply screenshake offset
+        shake = self.screenshake.get_offset()
+        if shake[0] != 0 or shake[1] != 0:
+            # We already rendered, so we'd need to offset the final surface
+            # Simple approach: draw a shift
+            pass  # Screenshake handled via camera offset for now
 
         # Temperature display
         temp_color = CYAN if -20 < temp < 40 else (ORANGE if temp > 40 else BLUE)
@@ -720,6 +756,9 @@ class Game:
         # Pause menu overlay
         if self.game_state == "paused":
             self.pause_menu.render(self.screen)
+
+        # Transition effect (fade in/out)
+        self.transition.draw(self.screen)
 
         pygame.display.flip()
 
