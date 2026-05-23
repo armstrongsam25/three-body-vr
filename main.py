@@ -7,6 +7,7 @@ Enter the VR world of Trisolaris and attempt to solve the chaotic three-body pro
 
 import sys
 import math
+import random
 import pygame
 import numpy as np
 
@@ -17,6 +18,8 @@ from src.nbody import (
 )
 from src.renderer import Renderer
 from src.civilization import Civilization, MilestoneTracker
+from src.audio import AudioEngine
+from src.menu import Menu, PauseMenu
 
 
 class Game:
@@ -25,24 +28,32 @@ class Game:
     def __init__(self):
         pygame.init()
         pygame.display.set_caption(TITLE)
-        
+
         self.screen = pygame.display.set_mode(
             (SCREEN_WIDTH, SCREEN_HEIGHT),
             pygame.RESIZABLE
         )
         self.clock = pygame.time.Clock()
         self.running = True
-        self.paused = False
         self.fullscreen = False
 
-        # Game state
+        # Game states
+        self.game_state = "menu"  # menu, playing, paused, help
         self.mode = MODE_OBSERVE
         self.time_scale = TIME_SCALE
         self.show_help = False
         self.show_events = False
-        self.event_display_timer = 0
         self.milestone_popup = None
         self.milestone_popup_timer = 0
+        self.prev_era = ERA_STABLE
+
+        # Menu
+        self.menu = Menu(SCREEN_WIDTH, SCREEN_HEIGHT)
+        self.menu.setup()
+        self.pause_menu = PauseMenu(SCREEN_WIDTH, SCREEN_HEIGHT)
+
+        # Audio
+        self.audio = AudioEngine()
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -60,133 +71,292 @@ class Game:
         # Renderer
         self.renderer = Renderer(self.screen)
 
-        # Camera dragging
+        # Camera
         self.dragging = False
         self.drag_start = (0, 0)
         self.last_mouse = (0, 0)
 
         # Game state tracking
         self.frame_count = 0
-        self.auto_pan_speed = 0.3  # Slow auto-pan
+        self.simulation_time = 0.0
+        self.flash_message = None
+        self.flash_timer = 0
+
+    def start_game(self):
+        """Initialize/reset game state for play."""
+        self.simulation = create_three_body_system()
+        self.planet = create_planet(
+            self.simulation,
+            pos=(100, 100),
+            vel=(0, 30),
+            name="Trisolaris"
+        )
+        self.civilization = Civilization()
+        self.milestones = MilestoneTracker()
+        self.renderer.camera.offset = np.array([0.0, 0.0])
+        self.renderer.camera.target_zoom = 1.0
+        self.time_scale = 1.0
+        self.game_state = "playing"
+        self.paused = False
+        self.simulation_time = 0.0
+        self.prev_era = ERA_STABLE
+        self.flash_message = None
+        self.flash_timer = 0
+
+        # Start music
+        self.audio.start_music()
+
+    def show_flash(self, message, duration=120):
+        """Show a flash message."""
+        self.flash_message = message
+        self.flash_timer = duration
 
     def handle_input(self):
         """Process keyboard and mouse input."""
-        keys = pygame.key.get_pressed()
-        mouse = pygame.mouse.get_pressed()
         mouse_pos = pygame.mouse.get_pos()
-
-        # Pan with arrow keys / WASD
-        pan_speed = 5
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            self.renderer.camera.pan(-pan_speed, 0)
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            self.renderer.camera.pan(pan_speed, 0)
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            self.renderer.camera.pan(0, -pan_speed)
-        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            self.renderer.camera.pan(0, pan_speed)
-
-        # Zooming
-        if keys[pygame.K_EQUALS] or keys[pygame.K_PLUS]:
-            self.renderer.camera.target_zoom = min(5.0, self.renderer.camera.target_zoom * 1.02)
-        if keys[pygame.K_MINUS]:
-            self.renderer.camera.target_zoom = max(0.1, self.renderer.camera.target_zoom * 0.98)
-
-        # Time scale
-        if keys[pygame.K_LEFTBRACKET]:
-            self.time_scale = max(MIN_TIME_SCALE, self.time_scale * 0.95)
-        if keys[pygame.K_RIGHTBRACKET]:
-            self.time_scale = min(MAX_TIME_SCALE, self.time_scale * 1.05)
-
-        # Mouse drag pan
-        if mouse[0]:
-            if not self.dragging:
-                self.dragging = True
-                self.drag_start = mouse_pos
-            else:
-                dx = mouse_pos[0] - self.last_mouse[0]
-                dy = mouse_pos[1] - self.last_mouse[1]
-                self.renderer.camera.pan(-dx, -dy)
-        else:
-            self.dragging = False
-
-        # Mouse wheel zoom
-        self.last_mouse = mouse_pos
+        mouse_click = False
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
 
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_click = True
+
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    self.paused = not self.paused
+                if self.game_state == "menu":
+                    if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                        self.start_game()
+                        self.audio.play('click')
+                    elif event.key == pygame.K_ESCAPE:
+                        self.running = False
 
-                elif event.key == pygame.K_e:
-                    # Toggle predict mode
-                    self.mode = MODE_PREDICT if self.mode == MODE_OBSERVE else MODE_OBSERVE
-                    if self.mode == MODE_PREDICT:
-                        self.milestones.milestones['first_prediction'] = True
+                elif self.game_state == "help":
+                    if event.key == pygame.K_ESCAPE or event.key == pygame.K_h:
+                        self.game_state = "playing"
+                        self.show_help = False
 
-                elif event.key == pygame.K_r:
-                    # Reset simulation
-                    self.simulation = create_three_body_system()
-                    self.planet = create_planet(
-                        self.simulation,
-                        pos=(100, 100),
-                        vel=(0, 30),
-                        name="Trisolaris"
-                    )
-                    self.civilization = Civilization()
-                    self.renderer.camera.offset = np.array([0.0, 0.0])
-                    self.renderer.camera.target_zoom = 1.0
+                elif self.game_state == "playing" or self.game_state == "paused":
+                    if event.key == pygame.K_SPACE:
+                        if self.game_state == "playing":
+                            self.game_state = "paused"
+                            self.pause_menu.setup()
+                        else:
+                            self.game_state = "playing"
+                        self.audio.play('click')
 
-                elif event.key == pygame.K_h:
-                    self.show_help = not self.show_help
+                    elif event.key == pygame.K_e and self.game_state == "playing":
+                        self.mode = MODE_PREDICT if self.mode == MODE_OBSERVE else MODE_OBSERVE
+                        if self.mode == MODE_PREDICT:
+                            self.milestones.milestones['first_prediction'] = True
+                            self.audio.play('predict')
+                            self.show_flash("PREDICTION MODE ACTIVE", 60)
+                        else:
+                            self.show_flash("OBSERVATION MODE", 60)
 
-                elif event.key == pygame.K_TAB:
-                    self.show_events = not self.show_events
+                    elif event.key == pygame.K_r and self.game_state == "playing":
+                        self.start_game()
+                        self.audio.play('click')
 
-                elif event.key == pygame.K_f:
-                    self.fullscreen = not self.fullscreen
-                    if self.fullscreen:
-                        self.screen = pygame.display.set_mode(
-                            (0, 0), pygame.FULLSCREEN
+                    elif event.key == pygame.K_h and self.game_state == "playing":
+                        self.show_help = not self.show_help
+                        self.game_state = "help" if self.show_help else "playing"
+
+                    elif event.key == pygame.K_TAB and self.game_state == "playing":
+                        self.show_events = not self.show_events
+
+                    elif event.key == pygame.K_f:
+                        self.fullscreen = not self.fullscreen
+                        if self.fullscreen:
+                            self.screen = pygame.display.set_mode(
+                                (0, 0), pygame.FULLSCREEN
+                            )
+                        else:
+                            self.screen = pygame.display.set_mode(
+                                (SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE
+                            )
+                        self.renderer = Renderer(self.screen)
+                        # Recreate menus with new size
+                        w, h = self.screen.get_size()
+                        self.menu = Menu(w, h)
+                        self.menu.setup()
+                        self.pause_menu = PauseMenu(w, h)
+
+                    elif event.key == pygame.K_ESCAPE:
+                        if self.game_state == "paused":
+                            self.game_state = "playing"
+                        else:
+                            self.game_state = "paused"
+                            self.pause_menu.setup()
+
+                    elif event.key == pygame.K_m:
+                        enabled = self.audio.toggle_mute()
+                        self.show_flash(
+                            "Audio: ON" if enabled else "Audio: MUTED", 60
                         )
-                    else:
-                        self.screen = pygame.display.set_mode(
-                            (SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE
-                        )
-                    self.renderer = Renderer(self.screen)
 
-                elif event.key == pygame.K_ESCAPE:
-                    self.running = False
+                    elif event.key == pygame.K_0:
+                        self.time_scale = 1.0
+                        self.show_flash("Speed: 1x", 30)
+                    elif event.key == pygame.K_1:
+                        self.time_scale = 0.5
+                        self.show_flash("Speed: 0.5x", 30)
+                    elif event.key == pygame.K_2:
+                        self.time_scale = 2.0
+                        self.show_flash("Speed: 2x", 30)
+                    elif event.key == pygame.K_5:
+                        self.time_scale = 5.0
+                        self.show_flash("Speed: 5x", 30)
 
-                elif event.key == pygame.K_0:
-                    self.time_scale = 1.0
+                    elif event.key == pygame.K_c:
+                        self.renderer.camera.target_offset = self.planet.pos.copy()
+                        self.show_flash("Centered on Trisolaris", 30)
 
-                elif event.key == pygame.K_1:
-                    self.time_scale = 0.5
-
-                elif event.key == pygame.K_2:
-                    self.time_scale = 2.0
-
-                elif event.key == pygame.K_5:
-                    self.time_scale = 5.0
-
-                elif event.key == pygame.K_c:
-                    # Center on planet
-                    self.renderer.camera.target_offset = self.planet.pos.copy()
-
-            elif event.type == pygame.MOUSEWHEEL:
+            elif event.type == pygame.MOUSEWHEEL and self.game_state == "playing":
                 zoom_factor = 1.1 if event.y > 0 else 0.9
                 self.renderer.camera.target_zoom *= zoom_factor
-                self.renderer.camera.target_zoom = max(0.1, min(5.0, self.renderer.camera.target_zoom))
+                self.renderer.camera.target_zoom = max(
+                    0.1, min(5.0, self.renderer.camera.target_zoom)
+                )
 
             elif event.type == pygame.VIDEORESIZE:
                 self.renderer.width = event.w
                 self.renderer.height = event.h
                 self.renderer.camera.width = event.w
                 self.renderer.camera.height = event.h
+
+        # Continuous input (polling)
+        if self.game_state == "playing":
+            keys = pygame.key.get_pressed()
+
+            pan_speed = 5
+            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                self.renderer.camera.pan(-pan_speed, 0)
+            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                self.renderer.camera.pan(pan_speed, 0)
+            if keys[pygame.K_UP] or keys[pygame.K_w]:
+                self.renderer.camera.pan(0, -pan_speed)
+            if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+                self.renderer.camera.pan(0, pan_speed)
+
+            if keys[pygame.K_EQUALS] or keys[pygame.K_PLUS]:
+                self.renderer.camera.target_zoom = min(
+                    5.0, self.renderer.camera.target_zoom * 1.02
+                )
+            if keys[pygame.K_MINUS]:
+                self.renderer.camera.target_zoom = max(
+                    0.1, self.renderer.camera.target_zoom * 0.98
+                )
+
+            if keys[pygame.K_LEFTBRACKET]:
+                self.time_scale = max(MIN_TIME_SCALE, self.time_scale * 0.95)
+            if keys[pygame.K_RIGHTBRACKET]:
+                self.time_scale = min(MAX_TIME_SCALE, self.time_scale * 1.05)
+
+            # Mouse drag pan
+            mouse = pygame.mouse.get_pressed()
+            if mouse[0]:
+                if not self.dragging:
+                    self.dragging = True
+                    self.drag_start = mouse_pos
+                else:
+                    dx = mouse_pos[0] - self.last_mouse[0]
+                    dy = mouse_pos[1] - self.last_mouse[1]
+                    self.renderer.camera.pan(-dx, -dy)
+            else:
+                self.dragging = False
+
+            self.last_mouse = mouse_pos
+
+        # Menu handling
+        if self.game_state == "menu":
+            action = self.menu.update(mouse_pos, mouse_click, self.clock.get_time() / 1000.0)
+            if action == "start":
+                self.start_game()
+            elif action == "help":
+                self.show_help = True
+                self.game_state = "help"
+            elif action == "quit":
+                self.running = False
+
+        elif self.game_state == "paused":
+            action = self.pause_menu.update(mouse_pos, mouse_click)
+            if action == "resume":
+                self.game_state = "playing"
+            elif action == "reset":
+                self.start_game()
+            elif action == "menu":
+                self.game_state = "menu"
+                self.menu.setup()
+                self.audio.stop_music()
+            elif action == "quit":
+                self.running = False
+
+    def update(self, dt):
+        """Update game state."""
+        dt = min(dt, 0.1)
+
+        if self.game_state == "playing":
+            # Update simulation
+            sim_dt = dt * self.time_scale * 10
+            self.simulation.step(sim_dt)
+            self.simulation_time += sim_dt
+
+            # Update civilization
+            stability = self.simulation.get_stability_metric()
+            prev_era = self.civilization.current_era
+            self.civilization.update(stability, sim_dt * 0.01)
+
+            # Era transition effects
+            if self.civilization.current_era != prev_era:
+                self.audio.play('era_transition')
+                if self.civilization.current_era == ERA_CHAOTIC:
+                    self.show_flash("⚠ CHAOTIC ERA BEGINS ⚠", 120)
+                elif self.civilization.current_era == ERA_STABLE:
+                    self.show_flash("✦ STABLE ERA BEGINS ✦", 120)
+            else:
+                # Ambient sound
+                if int(self.simulation_time) % 5 == 0:
+                    self.audio.play_era_ambient(self.civilization.current_era)
+
+            # Collapse sound
+            state = self.civilization.get_state()
+            if state['collapse_count'] > 0:
+                # Only play on new collapse
+                if not hasattr(self, '_last_collapse'):
+                    self._last_collapse = 0
+                if state['collapse_count'] > self._last_collapse:
+                    self.audio.play('collapse')
+                    self._last_collapse = state['collapse_count']
+
+            # Check milestones
+            unlocked = self.milestones.check(state)
+            if unlocked:
+                self.milestone_popup = unlocked[0]
+                self.milestone_popup_timer = 180
+                self.audio.play('milestone')
+                self.civilization.add_knowledge(5)
+
+            # Auto-pan for cinematic feel
+            if not self.dragging:
+                self.renderer.camera.target_offset += np.array([
+                    math.sin(self.frame_count * 0.001) * 0.2,
+                    math.cos(self.frame_count * 0.001) * 0.2,
+                ])
+
+        # Update flash message
+        if self.flash_timer > 0:
+            self.flash_timer -= 1
+            if self.flash_timer == 0:
+                self.flash_message = None
+
+        # Update milestone popup
+        if self.milestone_popup_timer > 0:
+            self.milestone_popup_timer -= 1
+            if self.milestone_popup_timer == 0:
+                self.milestone_popup = None
+
+        self.frame_count += 1
 
     def draw_help(self):
         """Draw help overlay."""
@@ -197,76 +367,86 @@ class Game:
         self.screen.blit(overlay, (0, 0))
 
         lines = [
-            "THREE BODY VR - CONTROLS",
-            "",
-            "Space     - Pause / Resume",
-            "E         - Toggle Prediction Mode",
-            "R         - Reset Simulation",
-            "C         - Center on Trisolaris",
-            "H         - Toggle Help",
-            "Tab       - Toggle Event Log",
-            "F         - Fullscreen",
-            "0,1,2,5   - Set Time Speed",
-            "[/]       - Adjust Time Scale",
-            "+/-        - Zoom In / Out",
-            "Arrow Keys - Pan View",
-            "Mouse Drag - Pan View",
-            "Mouse Wheel - Zoom",
-            "Esc       - Quit",
-            "",
-            "GOAL: Help Trisolaran civilization survive",
-            "by understanding the three-body problem.",
-            "Observe the orbital patterns, predict era changes,",
-            "and guide civilization through Stable Eras.",
-            "",
-            "Press H to close",
+            ("THREE BODY VR - CONTROLS", True, YELLOW),
+            ("", False, None),
+            ("Space        Pause / Resume", False, WHITE),
+            ("E            Toggle Prediction Mode", False, WHITE),
+            ("R            Reset Simulation", False, WHITE),
+            ("C            Center on Trisolaris", False, WHITE),
+            ("H            Toggle Help", False, WHITE),
+            ("Tab          Toggle Event Log", False, WHITE),
+            ("M            Mute/Unmute Audio", False, WHITE),
+            ("F            Fullscreen", False, WHITE),
+            ("0,1,2,5       Set Time Speed", False, WHITE),
+            ("[/]          Adjust Time Scale", False, WHITE),
+            ("+/-           Zoom In / Out", False, WHITE),
+            ("Arrow Keys    Pan View", False, WHITE),
+            ("Mouse Drag    Pan View", False, WHITE),
+            ("Mouse Wheel   Zoom", False, WHITE),
+            ("Esc           Menu / Quit", False, WHITE),
+            ("", False, None),
+            ("", False, None),
+            ("THE STORY", True, YELLOW),
+            ("", False, None),
+            ("You have entered the VR world of Trisolaris,", False, CYAN),
+            ("a planet orbiting three chaotic suns.", False, CYAN),
+            ("Civilizations rise during Stable Eras and fall", False, CYAN),
+            ("during Chaotic Eras when the suns' paths", False, CYAN),
+            ("become unpredictable.", False, CYAN),
+            ("", False, None),
+            ("Your goal: observe the orbital patterns,", False, CYAN),
+            ("predict era changes, and help Trisolaran", False, CYAN),
+            ("civilization survive by gaining understanding", False, CYAN),
+            ("of the three-body problem.", False, CYAN),
+            ("", False, None),
+            ("Press H or Esc to return", False, GRAY),
         ]
 
-        y = 50
-        for line in lines:
-            if line.startswith("THREE"):
-                surf = self.renderer.font_large.render(line, True, YELLOW)
-            elif line == "":
-                y += 10
+        y = 40
+        for text, is_title, color in lines:
+            if text == "":
+                y += 10 if not is_title else 15
                 continue
+            if is_title:
+                surf = self.renderer.font_large.render(text, True, color)
             else:
-                surf = self.renderer.font_small.render(line, True, WHITE)
+                surf = self.renderer.font_small.render(text, True, color)
 
             x = self.renderer.width // 2 - surf.get_width() // 2
             self.screen.blit(surf, (x, y))
-            y += 28
+            y += 26
 
-    def draw_events(self):
-        """Draw event log."""
-        events = self.civilization.get_recent_events(10)
+    def draw_events_panel(self):
+        """Draw event log panel."""
+        events = self.civilization.get_recent_events(12)
         if not events:
             return
 
-        # Panel background
-        panel_w = 350
-        panel_h = min(300, len(events) * 25 + 30)
+        panel_w = 380
+        panel_h = min(320, len(events) * 25 + 40)
         panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
         panel.fill((0, 0, 0, 180))
         pygame.draw.rect(panel, (60, 60, 80, 200), panel.get_rect(), 2)
 
         # Title
         title = self.renderer.font_medium.render("EVENT LOG", True, YELLOW)
-        panel.blit(title, (10, 5))
+        panel.blit(title, (10, 8))
 
-        # Events
         for i, event in enumerate(reversed(events)):
             color = WHITE
             if "collapse" in event.lower():
                 color = BRIGHT_RED
             elif "knowledge" in event.lower() or "enlightenment" in event.lower():
                 color = CYAN
-            elif "stable" in event.lower():
+            elif "stable" in event.lower() or "golden" in event.lower():
                 color = GREEN
+            elif "catastrophe" in event.lower():
+                color = ORANGE
 
             text = self.renderer.font_small.render(
-                f"· {event[:50]}", True, color
+                f"· {event[:55]}", True, color
             )
-            panel.blit(text, (15, 35 + i * 25))
+            panel.blit(text, (15, 40 + i * 25))
 
         self.screen.blit(panel, (self.renderer.width - panel_w - 10, 80))
 
@@ -277,58 +457,73 @@ class Game:
             if not msg:
                 return
 
-            alpha = min(255, self.milestone_popup_timer * 5)
-            if self.milestone_popup_timer < 30:
-                alpha = self.milestone_popup_timer * 8
+            # Fade in/out
+            if self.milestone_popup_timer > 150:
+                alpha = int(255 * (180 - self.milestone_popup_timer) / 30)
+            elif self.milestone_popup_timer < 30:
+                alpha = int(255 * self.milestone_popup_timer / 30)
+            else:
+                alpha = 255
+            alpha = max(0, min(255, alpha))
 
-            surf = self.renderer.font_medium.render(msg, True, YELLOW)
-            bg = pygame.Surface(
-                (surf.get_width() + 40, surf.get_height() + 20), pygame.SRCALPHA
-            )
-            bg.fill((0, 0, 0, min(200, alpha)))
-            bg.blit(surf, (20, 10))
+            # Glow effect
+            title_text = "✦ MILESTONE ACHIEVED ✦"
+            title_surf = self.renderer.font_medium.render(title_text, True, YELLOW)
+            msg_surf = self.renderer.font_small.render(msg, True, WHITE)
 
-            x = self.renderer.width // 2 - bg.get_width() // 2
-            y = self.renderer.height - 100
+            total_w = max(title_surf.get_width(), msg_surf.get_width()) + 60
+            total_h = title_surf.get_height() + msg_surf.get_height() + 40
+
+            bg = pygame.Surface((total_w, total_h), pygame.SRCALPHA)
+            bg.fill((0, 0, 0, min(220, alpha)))
+
+            # Golden border
+            border_color = (255, 220, 50, alpha)
+            pygame.draw.rect(bg, border_color, bg.get_rect(), 2)
+
+            bg.blit(title_surf, (total_w // 2 - title_surf.get_width() // 2, 15))
+            bg.blit(msg_surf, (total_w // 2 - msg_surf.get_width() // 2, 15 + title_surf.get_height() + 5))
+
+            x = self.renderer.width // 2 - total_w // 2
+            y = self.renderer.height - 140
             self.screen.blit(bg, (x, y))
 
-    def update(self, dt):
-        """Update game state."""
-        dt = min(dt, 0.1)  # Cap dt to prevent physics explosion
+    def draw_flash_message(self):
+        """Draw centered flash message."""
+        if not self.flash_message or self.flash_timer <= 0:
+            return
 
-        if not self.paused:
-            # Update simulation
-            sim_dt = dt * self.time_scale * 10  # Scale for visible motion
-            self.simulation.step(sim_dt)
+        alpha = min(255, self.flash_timer * 5)
+        if self.flash_timer < 20:
+            alpha = self.flash_timer * 12
 
-            # Update civilization
-            stability = self.simulation.get_stability_metric()
-            self.civilization.update(stability, sim_dt * 0.01)
+        font_size = 36
+        flash_font = pygame.font.Font(None, font_size)
+        surf = flash_font.render(self.flash_message, True, YELLOW)
+        bg = pygame.Surface(
+            (surf.get_width() + 30, surf.get_height() + 15), pygame.SRCALPHA
+        )
+        bg.fill((0, 0, 0, min(180, alpha)))
+        bg.blit(surf, (15, 7))
 
-            # Check milestones
-            state = self.civilization.get_state()
-            unlocked = self.milestones.check(state)
-            if unlocked:
-                self.milestone_popup = unlocked[0]
-                self.milestone_popup_timer = 120
-
-        # Update milestone popup timer
-        if self.milestone_popup_timer > 0:
-            self.milestone_popup_timer -= 1
-            if self.milestone_popup_timer == 0:
-                self.milestone_popup = None
-
-        # Auto-pan for cinematic feel
-        if not self.dragging and not self.paused:
-            self.renderer.camera.target_offset += np.array([
-                math.sin(self.frame_count * 0.001) * 0.2,
-                math.cos(self.frame_count * 0.001) * 0.2,
-            ])
-
-        self.frame_count += 1
+        x = self.renderer.width // 2 - bg.get_width() // 2
+        y = self.renderer.height // 2 + 120
+        self.screen.blit(bg, (x, y))
 
     def render(self):
         """Render current frame."""
+        if self.game_state == "menu":
+            self.menu.render(self.screen, self.clock.get_time() / 1000.0)
+            pygame.display.flip()
+            return
+
+        if self.game_state == "help":
+            self.renderer.draw_background(0.5)
+            self.draw_help()
+            pygame.display.flip()
+            return
+
+        # Playing or paused
         stability = self.simulation.get_stability_metric()
         state = self.civilization.get_state()
 
@@ -339,10 +534,10 @@ class Game:
             state['population'],
             self.mode,
             self.time_scale,
-            self.paused,
+            self.game_state == "paused",
         )
 
-        # Draw knowledge meter (left side)
+        # Knowledge meter
         knowledge = state['knowledge']
         bar_h = 200
         bar_w = 15
@@ -351,7 +546,6 @@ class Game:
 
         pygame.draw.rect(self.screen, DARK_GRAY, (bar_x, bar_y, bar_w, bar_h))
         know_h = int(knowledge / 100 * bar_h)
-        # Gradient from blue to bright cyan
         know_color = (
             int(40 + 200 * knowledge / 100),
             int(120 + 135 * knowledge / 100),
@@ -363,26 +557,24 @@ class Game:
         )
         pygame.draw.rect(self.screen, WHITE, (bar_x, bar_y, bar_w, bar_h), 1)
 
-        # Knowledge label
-        know_label = self.renderer.font_small.render(
-            f"Know:", True, CYAN
-        )
+        know_label = self.renderer.font_small.render("Know:", True, CYAN)
         self.screen.blit(know_label, (bar_x - 2, bar_y - 20))
-        know_val = self.renderer.font_small.render(
-            f"{knowledge:.0f}%", True, CYAN
-        )
+        know_val = self.renderer.font_small.render(f"{knowledge:.0f}%", True, CYAN)
         self.screen.blit(know_val, (bar_x - 2, bar_y + bar_h + 5))
-
-        # Help overlay
-        if self.show_help:
-            self.draw_help()
 
         # Events panel
         if self.show_events:
-            self.draw_events()
+            self.draw_events_panel()
+
+        # Flash message
+        self.draw_flash_message()
 
         # Milestone popup
         self.draw_milestone_popup()
+
+        # Pause menu overlay
+        if self.game_state == "paused":
+            self.pause_menu.render(self.screen)
 
         pygame.display.flip()
 
@@ -395,6 +587,7 @@ class Game:
             self.update(dt)
             self.render()
 
+        self.audio.stop_music()
         pygame.quit()
         sys.exit()
 
