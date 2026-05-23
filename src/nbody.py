@@ -141,6 +141,68 @@ class NBodySimulation:
         )
         return dist > 800 and vel_toward_com < 0
 
+    def check_collisions(self):
+        """Check for close encounters/collisions between bodies."""
+        collisions = []
+        for i in range(len(self.bodies)):
+            for j in range(i + 1, len(self.bodies)):
+                bi = self.bodies[i]
+                bj = self.bodies[j]
+                dist = np.linalg.norm(bi.pos - bj.pos)
+                collision_dist = (bi.radius + bj.radius) * 1.5
+                if dist < collision_dist:
+                    collisions.append((i, j, dist))
+        return collisions
+
+    def get_closest_pair(self):
+        """Get the closest pair of suns."""
+        if len(self.bodies) < 2:
+            return None
+        min_dist = float('inf')
+        closest = None
+        for i in range(len(self.bodies)):
+            for j in range(i + 1, len(self.bodies)):
+                if not self.bodies[i].is_sun or not self.bodies[j].is_sun:
+                    continue
+                dist = np.linalg.norm(self.bodies[i].pos - self.bodies[j].pos)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest = (i, j, dist)
+        return closest
+
+    def is_planet_between_suns(self, planet_idx):
+        """Check if the planet is between two suns (double daylight - very hot!)."""
+        if len(self.bodies) < 3:
+            return 0
+        
+        planet = self.bodies[planet_idx]
+        sun_count = 0
+        close_suns = 0
+        
+        for i, body in enumerate(self.bodies):
+            if i != planet_idx and body.is_sun:
+                dist = np.linalg.norm(planet.pos - body.pos)
+                if dist < 150:
+                    close_suns += 1
+                if dist < 300:
+                    sun_count += 1
+        
+        return sun_count
+
+    def get_planet_temperature(self, planet_idx):
+        """Calculate approximate temperature based on sun distances."""
+        planet = self.bodies[planet_idx]
+        temp = 0
+        base_temp = -50  # Base cold planet
+        
+        for i, body in enumerate(self.bodies):
+            if i != planet_idx and body.is_sun:
+                dist = np.linalg.norm(planet.pos - body.pos)
+                if dist < 500:
+                    temp += body.mass * 5 / (dist / 50 + 1)
+        
+        return base_temp + temp
+
     def copy(self):
         """Deep copy the simulation."""
         sim = NBodySimulation()
@@ -150,45 +212,43 @@ class NBodySimulation:
         return sim
 
 
-def create_three_body_system():
+def create_three_body_system(config="default"):
     """Create the classic three-body problem configuration.
     
-    Three suns with slightly perturbed initial conditions for interesting chaos.
+    Args:
+        config: Which configuration to use.
+            "default" - Standard chaotic configuration
+            "figure8" - Stable figure-8 orbit (rare!)
+            "close" - Tightly packed suns
+            "wide" - Widely spaced suns
     """
     sim = NBodySimulation()
 
-    # Sun 1 (Alpha) - large, central
-    sun1 = CelestialBody(
-        pos=(0, 0),
-        vel=(0, -15),
-        mass=120.0,
-        radius=20,
-        color=(255, 200, 60),
-        name="Alpha Sun",
-        is_sun=True,
-    )
-
-    # Sun 2 (Beta) - medium, orbiting
-    sun2 = CelestialBody(
-        pos=(300, 0),
-        vel=(0, 25),
-        mass=100.0,
-        radius=18,
-        color=(255, 140, 40),
-        name="Beta Sun",
-        is_sun=True,
-    )
-
-    # Sun 3 (Gamma) - smaller, eccentric orbit
-    sun3 = CelestialBody(
-        pos=(-200, -150),
-        vel=(20, -20),
-        mass=80.0,
-        radius=16,
-        color=(255, 100, 50),
-        name="Gamma Sun",
-        is_sun=True,
-    )
+    if config == "figure8":
+        # The famous figure-8 solution (stable three-body orbit!)
+        # This actually works in Newtonian gravity (discovered by Moore, Chenciner, Montgomery)
+        sun1 = CelestialBody((0.97000436, -0.24308753), (-0.93240737, -0.86473146),
+                            100, 18, (255, 200, 60), "Alpha Sun", True)
+        sun2 = CelestialBody((-0.97000436, 0.24308753), (-0.93240737, -0.86473146),
+                            100, 18, (255, 140, 40), "Beta Sun", True)
+        sun3 = CelestialBody((0, 0), (1.86481474, 1.72946292),
+                            100, 18, (255, 100, 50), "Gamma Sun", True)
+        # Scale positions up
+        for s in [sun1, sun2, sun3]:
+            s.pos *= 150
+            s.vel *= 20
+    elif config == "close":
+        sun1 = CelestialBody((0, 0), (0, -10), 100, 18, (255, 200, 60), "Alpha Sun", True)
+        sun2 = CelestialBody((150, 80), (5, 15), 90, 16, (255, 140, 40), "Beta Sun", True)
+        sun3 = CelestialBody((-120, 100), (-15, -5), 85, 14, (255, 100, 50), "Gamma Sun", True)
+    elif config == "wide":
+        sun1 = CelestialBody((0, 0), (0, -8), 150, 22, (255, 200, 60), "Alpha Sun", True)
+        sun2 = CelestialBody((500, 100), (0, 12), 120, 20, (255, 140, 40), "Beta Sun", True)
+        sun3 = CelestialBody((-400, -200), (10, -10), 100, 18, (255, 100, 50), "Gamma Sun", True)
+    else:  # default
+        sun1 = CelestialBody((0, 0), (0, -15), 120, 20, (255, 200, 60), "Alpha Sun", True)
+        sun2 = CelestialBody((300, 0), (0, 25), 100, 18, (255, 140, 40), "Beta Sun", True)
+        sun3 = CelestialBody((-200, -150), (20, -20), 80, 16, (255, 100, 50), "Gamma Sun", True)
 
     sim.add_body(sun1)
     sim.add_body(sun2)

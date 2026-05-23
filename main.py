@@ -331,9 +331,36 @@ class Game:
             self.simulation.step(sim_dt)
             self.simulation_time += sim_dt
 
+            # Check for close encounters / collisions
+            collisions = self.simulation.check_collisions()
+            if collisions:
+                for i, j, dist in collisions:
+                    b1 = self.simulation.bodies[i]
+                    b2 = self.simulation.bodies[j]
+                    if b1.is_sun and b2.is_sun:
+                        self.civilization.events.append(
+                            f"{b1.name} and {b2.name} nearly collided! Gravitational chaos intensifies."
+                        )
+                        self.renderer.particle_system.emit(
+                            (b1.pos + b2.pos) / 2, count=20,
+                            color=(255, 220, 80), speed=5.0, lifetime=60
+                        )
+
+            # Planet temperature
+            planet_idx = len(self.simulation.bodies) - 1
+            sun_count = self.simulation.is_planet_between_suns(planet_idx)
+            temp = self.simulation.get_planet_temperature(planet_idx)
+
             # Update civilization
             stability = self.simulation.get_stability_metric()
             prev_era = self.civilization.current_era
+            
+            # Temperature affects civilization
+            if temp > 100:
+                self.civilization.population -= 0.05 * sim_dt * 0.01
+            elif temp < -100:
+                self.civilization.population -= 0.03 * sim_dt * 0.01
+                
             self.civilization.update(stability, sim_dt * 0.01)
 
             # Era transition effects
@@ -565,6 +592,10 @@ class Game:
         stability = self.simulation.get_stability_metric()
         state = self.civilization.get_state()
 
+        # Calculate planet temperature
+        planet_idx = len(self.simulation.bodies) - 1
+        temp = self.simulation.get_planet_temperature(planet_idx)
+
         self.renderer.render(
             self.simulation,
             state['era'],
@@ -574,6 +605,13 @@ class Game:
             self.time_scale,
             self.game_state == "paused",
         )
+
+        # Temperature display
+        temp_color = CYAN if -20 < temp < 40 else (ORANGE if temp > 40 else BLUE)
+        temp_label = self.renderer.font_small.render(
+            f"Temp: {temp:.0f}°C", True, temp_color
+        )
+        self.screen.blit(temp_label, (10, 35))
 
         # Knowledge meter
         knowledge = state['knowledge']
