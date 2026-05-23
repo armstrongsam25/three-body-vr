@@ -28,6 +28,7 @@ from src.scenario_select import ScenarioSelectScreen
 from src.effects import NebulaRenderer, ShockwaveEffect, ScreenShake, TransitionEffect
 from src.prediction import PredictionOverlay, KnowledgeDiscovery
 from src.starfield import Starfield, BloomRenderer
+from src.fleet import FleetManager, SpaceProbe
 
 
 class Game:
@@ -77,6 +78,7 @@ class Game:
         self.knowledge_discovery = KnowledgeDiscovery()
         self.starfield = Starfield(SCREEN_WIDTH, SCREEN_HEIGHT, 300)
         self.bloom = BloomRenderer()
+        self.fleet = FleetManager()
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -119,6 +121,7 @@ class Game:
         self.progression.apply_difficulty(self.civilization)
         self.civilization.collapse_limit = self.progression.get_difficulty_effects(0.5, 0)[3] + 1  # +1 extra life
         self.milestones = MilestoneTracker()
+        self.fleet = FleetManager()  # Reset fleet
         self.renderer.camera.offset = np.array([0.0, 0.0])
         self.renderer.camera.target_zoom = 1.0
         self.time_scale = 1.0
@@ -139,6 +142,22 @@ class Game:
         # Show difficulty
         diff_name = DIFFICULTY_SETTINGS[self.progression.current_difficulty]['name']
         self.show_flash(f"Difficulty: {diff_name}", 120)
+
+    def _launch_probe(self, probe_type, target_sun):
+        """Attempt to launch a probe from Trisolaris."""
+        if probe_type not in self.fleet.available_types:
+            return f"{probe_type.title()} probes not yet available"
+
+        probe, msg = self.fleet.build(
+            probe_type, self.planet.pos,
+            self.simulation, self.civilization,
+            target_body=target_sun
+        )
+        if probe:
+            self.audio.play('predict')  # Reuse predict sound
+            self.milestones.milestones['first_probe'] = True
+            return msg
+        return msg
 
     def show_flash(self, message, duration=120):
         """Show a flash message."""
@@ -269,6 +288,25 @@ class Game:
                     elif event.key == pygame.K_c:
                         self.renderer.camera.target_offset = self.planet.pos.copy()
                         self.show_flash("Centered on Trisolaris", 30)
+
+                    # Fleet launch keys (with qualifiers for sun targeting)
+                    elif event.key == pygame.K_1 and self.game_state == "playing":
+                        # Launch scout to sun 1
+                        result = self._launch_probe('scout', 0)
+                        if result:
+                            self.show_flash(result, 60)
+                    elif event.key == pygame.K_2 and self.game_state == "playing":
+                        result = self._launch_probe('observer', 1)
+                        if result:
+                            self.show_flash(result, 60)
+                    elif event.key == pygame.K_3 and self.game_state == "playing":
+                        result = self._launch_probe('lander', 2)
+                        if result:
+                            self.show_flash(result, 60)
+                    elif event.key == pygame.K_4 and self.game_state == "playing":
+                        result = self._launch_probe('interstellar', None)
+                        if result:
+                            self.show_flash(result, 60)
 
             elif event.type == pygame.MOUSEWHEEL and self.game_state == "playing":
                 zoom_factor = 1.1 if event.y > 0 else 0.9
@@ -409,6 +447,21 @@ class Game:
             self.simulation.step(sim_dt)
             self.simulation_time += sim_dt
 
+            # Update fleet probes
+            fleet_results = self.fleet.update(self.simulation, sim_dt)
+            for result_type, probe, reward in fleet_results:
+                if result_type == 'complete':
+                    self.civilization.add_knowledge(reward)
+                    self.civilization.events.append(
+                        f"{probe.name} completed mission! +{reward:.0f} knowledge"
+                    )
+                    self.show_flash(f"Probe returned! +{reward:.0f} knowledge", 90)
+                    self.shockwaves.emit(probe.pos, color=(100, 255, 200), max_radius=200, duration=60)
+
+            # Unlock fleet tech based on knowledge
+            state = self.civilization.get_state()
+            self.fleet.unlock_tech(state['knowledge'])
+
             # Check for close encounters / collisions
             collisions = self.simulation.check_collisions()
             if collisions:
@@ -490,6 +543,13 @@ class Game:
 
             # Check milestones
             unlocked = self.milestones.check(state)
+
+            # Fleet commander milestone
+            if not self.milestones.milestones['fleet_commander']:
+                if len(self.fleet.probes) >= 5:
+                    self.milestones.milestones['fleet_commander'] = True
+                    self.milestone_popup = 'fleet_commander'
+                    self.milestone_popup_timer = 180
             if unlocked:
                 self.milestone_popup = unlocked[0]
                 self.milestone_popup_timer = 180
@@ -563,6 +623,12 @@ class Game:
             ("Mouse Drag    Pan View", False, WHITE),
             ("Mouse Wheel   Zoom", False, WHITE),
             ("Esc           Menu / Quit", False, WHITE),
+            ("", False, None),
+            ("", False, None),
+            ("FLEET COMMANDS", True, YELLOW),
+            ("", False, None),
+            ("1 / 2 / 3 / 4  Launch Scout / Observer / Lander / Ark", False, CYAN),
+            ("(Probes target suns and return with knowledge)", False, GRAY),
             ("", False, None),
             ("", False, None),
             ("THE STORY", True, YELLOW),
@@ -748,6 +814,9 @@ class Game:
         if self.mode == MODE_PREDICT:
             self.prediction_overlay.draw(self.screen, self.renderer.camera)
 
+        # Draw fleet probes
+        self.fleet.draw(self.screen, self.renderer.camera)
+
         # Apply screenshake offset
         shake = self.screenshake.get_offset()
         if shake[0] != 0 or shake[1] != 0:
@@ -761,6 +830,18 @@ class Game:
             f"Temp: {temp:.0f}°C", True, temp_color
         )
         self.screen.blit(temp_label, (10, 35))
+
+        # Fleet status
+        probe_counts = self.fleet.get_probe_count()
+        if probe_counts:
+            fleet_y = 55
+            for ptype, count in probe_counts.items():
+                spec = SpaceProbe.PROBE_TYPES[ptype]
+                fleet_label = self.renderer.font_small.render(
+                    f"{spec['name']}: {count}", True, spec['color']
+                )
+                self.screen.blit(fleet_label, (10, fleet_y))
+                fleet_y += 16
 
         # Knowledge meter
         knowledge = state['knowledge']

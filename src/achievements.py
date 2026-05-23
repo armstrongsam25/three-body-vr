@@ -75,6 +75,8 @@ class AchievementsScreen:
             ('survive_10_collapses', 'Resilient', 'Survive 10 civilization collapses'),
             ('first_prediction', 'Prophet', 'Make your first orbital prediction'),
             ('predict_era_change', 'Oracle', 'Correctly predict an era change'),
+            ('first_probe', 'First Launch', 'Launch your first space probe'),
+            ('fleet_commander', 'Fleet Commander', 'Command 5 active probes simultaneously'),
             ('knowledge_50', 'Scholar', 'Achieve 50% understanding'),
             ('knowledge_100', 'Enlightenment', 'Achieve 100% understanding'),
         ]

@@ -124,6 +124,8 @@ class MilestoneTracker:
             'knowledge_100': False,
             'first_prediction': False,
             'predict_era_change': False,
+            'first_probe': False,
+            'fleet_commander': False,
         }
         self.unlocked_messages = {
             'first_cycle': "You've witnessed your first orbital cycle. The dance of the three suns is mesmerizing.",
@@ -134,6 +136,8 @@ class MilestoneTracker:
             'knowledge_100': "ENLIGHTENMENT: You have solved the three-body problem!",
             'first_prediction': "You've made your first prediction. The path ahead shimmers with possibility.",
             'predict_era_change': "You correctly predicted an era change! Your understanding grows.",
+            'first_probe': "First probe launched! The Trisolaran fleet begins its journey to the stars.",
+            'fleet_commander': "Fleet Commander! Five probes simultaneously active among the suns.",
         }
 
     def check(self, civ_state):
