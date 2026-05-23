@@ -20,6 +20,8 @@ from src.renderer import Renderer
 from src.civilization import Civilization, MilestoneTracker
 from src.audio import AudioEngine
 from src.menu import Menu, PauseMenu
+from src.lore import LoreEngine
+from src.save_system import SaveSystem
 
 
 class Game:
@@ -54,6 +56,10 @@ class Game:
 
         # Audio
         self.audio = AudioEngine()
+
+        # Lore & Save
+        self.lore = LoreEngine()
+        self.save_system = SaveSystem()
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -195,6 +201,29 @@ class Game:
                             "Audio: ON" if enabled else "Audio: MUTED", 60
                         )
 
+                    elif event.key == pygame.K_F5:
+                        # Quick save
+                        filename = self.save_system.save_game(
+                            self.simulation, self.planet,
+                            self.civilization, self.milestones
+                        )
+                        if filename:
+                            self.show_flash(f"Game saved: {filename}", 90)
+                        else:
+                            self.show_flash("Save failed!", 60)
+
+                    elif event.key == pygame.K_F9:
+                        # Quick load
+                        result = self.save_system.load_game(
+                            NBodySimulation, Civilization, MilestoneTracker
+                        )
+                        if result:
+                            self.simulation, self.planet, self.civilization, self.milestones, _ = result
+                            self.show_flash("Game loaded!", 90)
+                            self.renderer.camera.target_offset = self.planet.pos.copy()
+                        else:
+                            self.show_flash("No save found", 60)
+
                     elif event.key == pygame.K_0:
                         self.time_scale = 1.0
                         self.show_flash("Speed: 1x", 30)
@@ -329,6 +358,9 @@ class Game:
                     self.audio.play('collapse')
                     self._last_collapse = state['collapse_count']
 
+            # Update lore engine
+            self.lore.update(sim_dt, self.civilization.current_era, stability, state['knowledge'])
+
             # Check milestones
             unlocked = self.milestones.check(state)
             if unlocked:
@@ -336,6 +368,10 @@ class Game:
                 self.milestone_popup_timer = 180
                 self.audio.play('milestone')
                 self.civilization.add_knowledge(5)
+                # Add milestone narrative
+                narrative = self.lore.get_milestone_narrative(unlocked[0])
+                if narrative:
+                    self.civilization.events.append(narrative)
 
             # Auto-pan for cinematic feel
             if not self.dragging:
@@ -376,6 +412,8 @@ class Game:
             ("H            Toggle Help", False, WHITE),
             ("Tab          Toggle Event Log", False, WHITE),
             ("M            Mute/Unmute Audio", False, WHITE),
+            ("F5           Quick Save", False, WHITE),
+            ("F9           Quick Load", False, WHITE),
             ("F            Fullscreen", False, WHITE),
             ("0,1,2,5       Set Time Speed", False, WHITE),
             ("[/]          Adjust Time Scale", False, WHITE),
@@ -565,6 +603,10 @@ class Game:
         # Events panel
         if self.show_events:
             self.draw_events_panel()
+
+        # Lore quote
+        quote = self.lore.get_active_quote()
+        self.renderer.draw_quote(quote)
 
         # Flash message
         self.draw_flash_message()

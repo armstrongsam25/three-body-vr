@@ -292,6 +292,54 @@ class Renderer:
                         pts[k], pts[k + 1], 1
                     )
 
+    def draw_sun_flare(self, sun_pos, sun_color, sun_radius):
+        """Draw lens flare effects for suns."""
+        screen_pos = self.camera.world_to_screen(sun_pos)
+        sx, sy = int(screen_pos[0]), int(screen_pos[1])
+        screen_radius = max(1, int(sun_radius * self.camera.zoom))
+
+        if screen_radius < 3:
+            return
+
+        # Light rays emanating from sun
+        num_rays = 12
+        for i in range(num_rays):
+            angle = (i / num_rays) * 2 * math.pi + (pygame.time.get_ticks() / 5000)
+            ray_length = screen_radius * (2 + math.sin(pygame.time.get_ticks() / 1000 + i) * 0.5)
+            end_x = sx + math.cos(angle) * ray_length
+            end_y = sy + math.sin(angle) * ray_length
+
+            # Fading ray
+            for t in range(5, 0, -1):
+                alpha = max(0, 40 - t * 8)
+                progress = t / 5
+                px = sx + (end_x - sx) * progress
+                py = sy + (end_y - sy) * progress
+                flare_color = (*sun_color[:3], alpha)
+                pygame.draw.circle(
+                    self.screen, flare_color,
+                    (int(px), int(py)), max(1, screen_radius // 6)
+                )
+
+    def draw_quote(self, quote_text):
+        """Draw an atmospheric quote overlay."""
+        if not quote_text:
+            return
+
+        # Fade-in effect based on time
+        alpha = 180
+        
+        # Background ribbon
+        surf = self.font_small.render(f'"{quote_text}"', True, (180, 180, 200))
+        bg_w = min(surf.get_width() + 40, self.width - 40)
+        bg = pygame.Surface((bg_w, surf.get_height() + 16), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, alpha))
+        bg.blit(surf, (20, 8))
+
+        x = self.width // 2 - bg_w // 2
+        y = self.height - 70
+        self.screen.blit(bg, (x, y))
+
     def draw_hud(self, era, stability, time, population, mode, time_scale):
         """Draw game HUD."""
         # Era indicator
@@ -307,6 +355,11 @@ class Renderer:
 
         era_surf = self.font_large.render(era_text, True, era_color)
         era_rect = era_surf.get_rect(midtop=(self.width // 2, 10))
+        
+        # Era glow
+        glow_surf = self.font_large.render(era_text, True, (*era_color[:3], 40))
+        for ox, oy in [(-2,0), (2,0), (0,-2), (0,2)]:
+            self.screen.blit(glow_surf, era_rect.move(ox, oy))
         self.screen.blit(era_surf, era_rect)
 
         # Stability bar
@@ -384,6 +437,11 @@ class Renderer:
             for body in pred_sim.bodies:
                 pred_trail_color = (*body.color[:3], 150)
                 self.draw_prediction_trail(body.trail, pred_trail_color)
+
+        # Draw sun flares (behind planets)
+        for body in simulation.bodies:
+            if body.is_sun:
+                self.draw_sun_flare(body.pos, body.color, body.radius)
 
         # Draw bodies
         for body in simulation.bodies:
