@@ -29,6 +29,7 @@ from src.effects import NebulaRenderer, ShockwaveEffect, ScreenShake, Transition
 from src.prediction import PredictionOverlay, KnowledgeDiscovery
 from src.starfield import Starfield, BloomRenderer
 from src.fleet import FleetManager, SpaceProbe
+from src.events import EventManager
 
 
 class Game:
@@ -79,6 +80,7 @@ class Game:
         self.starfield = Starfield(SCREEN_WIDTH, SCREEN_HEIGHT, 300)
         self.bloom = BloomRenderer()
         self.fleet = FleetManager()
+        self.event_manager = EventManager()
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -122,6 +124,7 @@ class Game:
         self.civilization.collapse_limit = self.progression.get_difficulty_effects(0.5, 0)[3] + 1  # +1 extra life
         self.milestones = MilestoneTracker()
         self.fleet = FleetManager()  # Reset fleet
+        self.event_manager = EventManager()  # Reset events
         self.renderer.camera.offset = np.array([0.0, 0.0])
         self.renderer.camera.target_zoom = 1.0
         self.time_scale = 1.0
@@ -461,6 +464,20 @@ class Game:
             # Unlock fleet tech based on knowledge
             state = self.civilization.get_state()
             self.fleet.unlock_tech(state['knowledge'])
+
+            # Random events
+            triggered_events = self.event_manager.update(
+                stability, sim_dt, self.frame_count
+            )
+            for event in triggered_events:
+                pop_eff, know_eff = self.event_manager.apply_event_effects(
+                    event, self.civilization, self.renderer
+                )
+                self.show_flash(
+                    f"{event.event_type.replace('_', ' ').title()}!", 90
+                )
+                if abs(pop_eff) > 10:
+                    self.screenshake.trigger(abs(pop_eff), int(abs(pop_eff) * 2))
 
             # Check for close encounters / collisions
             collisions = self.simulation.check_collisions()
@@ -816,6 +833,12 @@ class Game:
 
         # Draw fleet probes
         self.fleet.draw(self.screen, self.renderer.camera)
+
+        # Draw event effects
+        self.event_manager.draw(
+            self.screen, self.renderer.camera,
+            self.renderer.width, self.renderer.height
+        )
 
         # Apply screenshake offset
         shake = self.screenshake.get_offset()
