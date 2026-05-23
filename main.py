@@ -27,6 +27,7 @@ from src.achievements import AchievementsScreen
 from src.scenario_select import ScenarioSelectScreen
 from src.effects import NebulaRenderer, ShockwaveEffect, ScreenShake, TransitionEffect
 from src.prediction import PredictionOverlay, KnowledgeDiscovery
+from src.starfield import Starfield, BloomRenderer
 
 
 class Game:
@@ -74,6 +75,8 @@ class Game:
         self.transition = TransitionEffect(SCREEN_WIDTH, SCREEN_HEIGHT)
         self.prediction_overlay = PredictionOverlay()
         self.knowledge_discovery = KnowledgeDiscovery()
+        self.starfield = Starfield(SCREEN_WIDTH, SCREEN_HEIGHT, 300)
+        self.bloom = BloomRenderer()
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -718,7 +721,14 @@ class Game:
         planet_idx = len(self.simulation.bodies) - 1
         temp = self.simulation.get_planet_temperature(planet_idx)
 
-        # Draw nebula background (before game render)
+        # Draw starfield (behind everything)
+        self.starfield.update(
+            camera_dx=self.renderer.camera.offset[0] * 0.01,
+            camera_dy=self.renderer.camera.offset[1] * 0.01
+        )
+        self.starfield.draw(self.screen)
+
+        # Draw nebula background
         self.nebula.draw(self.screen, camera_offset=self.renderer.camera.offset)
 
         self.renderer.render(
