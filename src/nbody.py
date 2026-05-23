@@ -41,6 +41,14 @@ class NBodySimulation:
     def add_body(self, body):
         self.bodies.append(body)
 
+    def copy(self):
+        """Create a deep copy for prediction evaluation."""
+        sim = NBodySimulation()
+        sim.dt = self.dt
+        sim.time = self.time
+        sim.bodies = [b.copy() for b in self.bodies]
+        return sim
+
     def compute_accelerations(self):
         """Compute gravitational accelerations for all bodies."""
         n = len(self.bodies)

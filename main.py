@@ -26,6 +26,7 @@ from src.progression import ProgressionManager, DIFFICULTY_SETTINGS, SCENARIOS, 
 from src.achievements import AchievementsScreen
 from src.scenario_select import ScenarioSelectScreen
 from src.effects import NebulaRenderer, ShockwaveEffect, ScreenShake, TransitionEffect
+from src.prediction import PredictionOverlay, KnowledgeDiscovery
 
 
 class Game:
@@ -71,6 +72,8 @@ class Game:
         self.shockwaves = ShockwaveEffect()
         self.screenshake = ScreenShake()
         self.transition = TransitionEffect(SCREEN_WIDTH, SCREEN_HEIGHT)
+        self.prediction_overlay = PredictionOverlay()
+        self.knowledge_discovery = KnowledgeDiscovery()
 
         # Simulation
         self.simulation = create_three_body_system()
@@ -175,10 +178,11 @@ class Game:
 
                     elif event.key == pygame.K_e and self.game_state == "playing":
                         self.mode = MODE_PREDICT if self.mode == MODE_OBSERVE else MODE_OBSERVE
+                        self.prediction_overlay.toggle()
                         if self.mode == MODE_PREDICT:
                             self.milestones.milestones['first_prediction'] = True
                             self.audio.play('predict')
-                            self.show_flash("PREDICTION MODE ACTIVE", 60)
+                            self.show_flash("PREDICTION MODE - Click and drag to predict orbits", 90)
                         else:
                             self.show_flash("OBSERVATION MODE", 60)
 
@@ -304,18 +308,42 @@ class Game:
             if keys[pygame.K_RIGHTBRACKET]:
                 self.time_scale = min(MAX_TIME_SCALE, self.time_scale * 1.05)
 
-            # Mouse drag pan
+            # Mouse drag pan (right click) or prediction (left click in predict mode)
             mouse = pygame.mouse.get_pressed()
-            if mouse[0]:
-                if not self.dragging:
-                    self.dragging = True
-                    self.drag_start = mouse_pos
+            if self.mode == MODE_PREDICT and self.game_state == "playing":
+                if mouse[0]:
+                    # Convert screen to world coords
+                    world_pos = self.renderer.camera.screen_to_world(mouse_pos)
+                    self.prediction_overlay.add_point(world_pos)
+                    self.dragging = False
+                elif mouse[2]:  # Right click pans
+                    if not self.dragging:
+                        self.dragging = True
+                        self.drag_start = mouse_pos
+                    else:
+                        dx = mouse_pos[0] - self.last_mouse[0]
+                        dy = mouse_pos[1] - self.last_mouse[1]
+                        self.renderer.camera.pan(-dx, -dy)
                 else:
-                    dx = mouse_pos[0] - self.last_mouse[0]
-                    dy = mouse_pos[1] - self.last_mouse[1]
-                    self.renderer.camera.pan(-dx, -dy)
+                    # Evaluate prediction when released
+                    if self.prediction_overlay.current_prediction:
+                        accuracy = self.prediction_overlay.commit_prediction(self.simulation)
+                        if accuracy > 0:
+                            self.civilization.add_knowledge(accuracy * 0.5)
+                            hint = self.knowledge_discovery.get_hint(accuracy)
+                            self.show_flash(f"Accuracy: {accuracy:.0f}% - {hint}", 120)
+                    self.dragging = False
             else:
-                self.dragging = False
+                if mouse[0]:
+                    if not self.dragging:
+                        self.dragging = True
+                        self.drag_start = mouse_pos
+                    else:
+                        dx = mouse_pos[0] - self.last_mouse[0]
+                        dy = mouse_pos[1] - self.last_mouse[1]
+                        self.renderer.camera.pan(-dx, -dy)
+                else:
+                    self.dragging = False
 
             self.last_mouse = mouse_pos
 
@@ -495,6 +523,12 @@ class Game:
         self.shockwaves.update()
         self.screenshake.update()
         self.transition.update()
+
+        # Auto-evaluate prediction if in prediction mode
+        if self.mode == MODE_PREDICT:
+            result = self.prediction_overlay.update(self.simulation, self.frame_count)
+            if result is not None and result > 0:
+                self.civilization.add_knowledge(result * 0.3)
 
         self.frame_count += 1
 
@@ -699,6 +733,10 @@ class Game:
 
         # Draw shockwaves (after simulation render, on top)
         self.shockwaves.draw(self.screen, self.renderer.camera)
+
+        # Draw prediction overlay
+        if self.mode == MODE_PREDICT:
+            self.prediction_overlay.draw(self.screen, self.renderer.camera)
 
         # Apply screenshake offset
         shake = self.screenshake.get_offset()
